@@ -1,0 +1,208 @@
+# Kubi v1 - Self-Hosted AI Search Engine
+# Exa Search open-source alternative
+services:
+  # =========================================================================
+  # Qdrant Vector Database
+  # =========================================================================
+  qdrant:
+    image: qdrant/qdrant:v1.13.2
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # =========================================================================
+  # SearXNG Meta-Search Engine
+  # =========================================================================
+  searxng:
+    image: searxng/searxng:latest
+    ports:
+      - "8888:8080"
+    volumes:
+      - ./config/searxng:/etc/searxng:rw
+    environment:
+      - SEARXNG_SECRET=${SEARXNG_SECRET:-kubi-searxng-secret-change-me}
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # =========================================================================
+  # Redis Cache
+  # =========================================================================
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # =========================================================================
+  # Kubi AI - Python FastAPI Service
+  # =========================================================================
+  kubi-ai:
+    build:
+      context: ./kubi-ai
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./kubi-ai/src:/app/src
+      - model_cache:/root/.cache
+    environment:
+      - KUBI_AI_PORT=8000
+      - KUBI_AI_HOST=0.0.0.0
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-all-MiniLM-L6-v2}
+      - EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION:-384}
+      - RERANK_MODEL=${RERANK_MODEL:-cross-encoder/ms-marco-MiniLM-L-6-v2}
+      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
+      - LLM_BASE_URL=${LLM_BASE_URL:-}
+      - LLM_API_KEY=${LLM_API_KEY:-}
+      - LLM_MODEL=${LLM_MODEL:-}
+      - LLM_FAST_MODEL=${LLM_FAST_MODEL:-}
+      - LLM_REASONING_MODEL=${LLM_REASONING_MODEL:-}
+      - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.3}
+      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-4096}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - KIMI_API_KEY=${KIMI_API_KEY:-}
+      - MIMO_API_KEY=${MIMO_API_KEY:-}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - TOGETHER_API_KEY=${TOGETHER_API_KEY:-}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY:-}
+      - PERPLEXITY_API_KEY=${PERPLEXITY_API_KEY:-}
+      - COHERE_API_KEY=${COHERE_API_KEY:-}
+      - FIREWORKS_API_KEY=${FIREWORKS_API_KEY:-}
+      - LOCAL_LLM_API_KEY=${LOCAL_LLM_API_KEY:-}
+      - SEARXNG_URL=${SEARXNG_URL:-http://searxng:8080}
+      - SEARXNG_ENGINES=${SEARXNG_ENGINES:-google,bing,duckduckgo,wikipedia}
+      - DUCKDUCKGO_ENABLED=${DUCKDUCKGO_ENABLED:-true}
+      - PLAYWRIGHT_HEADLESS=${PLAYWRIGHT_HEADLESS:-true}
+      - PLAYWRIGHT_TIMEOUT=${PLAYWRIGHT_TIMEOUT:-15000}
+      - CRAWL_MAX_PAGES=${CRAWL_MAX_PAGES:-10}
+      - CRAWL_MAX_CONCURRENT=${CRAWL_MAX_CONCURRENT:-5}
+      - QDRANT_HOST=${QDRANT_HOST:-qdrant}
+      - QDRANT_PORT=${QDRANT_PORT:-6333}
+      - PYTHON_LOG_LEVEL=${PYTHON_LOG_LEVEL:-INFO}
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      searxng:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # =========================================================================
+  # Kubi Core - Rust Axum Orchestrator
+  # =========================================================================
+  kubi-core:
+    build:
+      context: ./kubi-core
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - KUBI_CORE_PORT=8080
+      - KUBI_CORE_HOST=0.0.0.0
+      - KUBI_AI_URL=${KUBI_AI_URL:-http://kubi-ai:8000}
+      - QDRANT_URL=${QDRANT_URL:-http://qdrant:6333}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+      - CACHE_TTL_SECONDS=${CACHE_TTL_SECONDS:-300}
+      - RUST_LOG=${RUST_LOG:-info}
+    depends_on:
+      kubi-ai:
+        condition: service_started
+      qdrant:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # =========================================================================
+  # Kubi API - Bun + Hono Public API
+  # =========================================================================
+  kubi-api:
+    build:
+      context: ./kubi-api
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - KUBI_API_PORT=3000
+      - KUBI_API_HOST=0.0.0.0
+      - KUBI_API_KEY=${KUBI_API_KEY:-sk-kubi-change-me-in-production}
+      - KUBI_API_CORS_ORIGINS=${KUBI_API_CORS_ORIGINS:-*}
+      - KUBI_CORE_URL=${KUBI_CORE_URL:-http://kubi-core:8080}
+      - KUBI_AI_URL=${KUBI_AI_URL:-http://kubi-ai:8000}
+    depends_on:
+      kubi-core:
+        condition: service_started
+    restart: unless-stopped
+
+  # =========================================================================
+  # Kubi MCP Server - Model Context Protocol for Claude, Cursor, VS Code
+  # =========================================================================
+  kubi-mcp:
+    build:
+      context: ./kubi-mcp
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3001"
+    environment:
+      - KUBI_MCP_PORT=3001
+      - KUBI_MCP_HOST=0.0.0.0
+      - KUBI_API_URL=http://kubi-api:3000
+      - KUBI_API_KEY=${KUBI_API_KEY:-sk-kubi-change-me-in-production}
+    depends_on:
+      kubi-api:
+        condition: service_started
+    restart: unless-stopped
+
+  # =========================================================================
+  # Ollama LLM Server (optional - for local LLM)
+  # =========================================================================
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    profiles:
+      - with-ollama
+
+volumes:
+  qdrant_data:
+  redis_data:
+  model_cache:
+  ollama_data:
+
+networks:
+  default:
+    name: kubi-network

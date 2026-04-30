@@ -1,0 +1,56 @@
+# Kubi AI - Python Search & Intelligence Service
+
+use_default_settings: true
+
+server:
+  secret_uri: "kubi-searxng-secret-change-me"
+  bind_address: "0.0.0.0"
+  port: 8080
+  limiter: false
+  image_proxy: false
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  default_lang: "en"
+  formats:
+    - html
+    - json
+
+outgoing:
+  request_timeout: 10
+  max_request_timeout: 15
+  useragent_suffix: ""
+  pool_connections: 100
+  pool_maxsize: 20
+
+engines:
+  - name: google
+    engine: google
+    shortcut: g
+    disabled: false
+
+  - name: bing
+    engine: bing
+    shortcut: b
+    disabled: false
+
+  - name: duckduckgo
+    engine: duckduckgo
+    shortcut: ddg
+    disabled: false
+
+  - name: wikipedia
+    engine: wikipedia
+    shortcut: wp
+    disabled: false
+
+  - name: arxiv
+    engine: arxiv
+    shortcut: arx
+    disabled: false
+
+  - name: github
+    engine: github
+    shortcut: gh
+    disabled: false
